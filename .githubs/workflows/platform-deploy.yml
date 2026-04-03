@@ -2,28 +2,42 @@ name: Platform Deployment
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: 'Target Environment'
         required: true
         default: 'staging'
         type: choice
-        options:
-          - staging
-          - prod
+        options: [staging, prod]
 
 jobs:
+  security-scan:
+    name: Security & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Scan Kubernetes manifests & Helm values for misconfigurations
+      - name: Run Trivy Config Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          hide-progress: false
+          format: 'table'
+          exit-code: '1' # Fails the build if high/critical issues are found
+          severity: 'HIGH,CRITICAL'
+
   deploy:
     name: Deploy to ${{ github.event.inputs.environment || 'staging' }}
+    needs: security-scan # Wait for security scan to pass
     runs-on: ubuntu-latest
-    
-    # Map GitHub Environment for protection rules (approvals)
     environment: ${{ github.event.inputs.environment || 'staging' }}
-
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -42,26 +56,16 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v3
-        with:
-          version: 'latest'
 
       - name: Deploy Platform via Task
         env:
-          # Inject secrets directly into the environment for Task to pick up
           ENV: ${{ github.event.inputs.environment || 'staging' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Initialize Helm Repos
           task helm:repos
-          
-          # 2. Install Infrastructure (ArgoCD)
           task install:argocd
-          
-          # 3. Deploy Platform Stack (Ingress, Monitoring, etc.)
           task install:platform
-          
-          # 4. Trigger GitOps Synchronization
           task deploy:gitops
 
-      - name: Run Post-Deployment Health Check
+      - name: Health Check
         run: task cluster:health
