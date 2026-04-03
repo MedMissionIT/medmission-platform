@@ -1,0 +1,30 @@
+# --- Secrets & Local Config ---
+.env
+.env.*
+!.env.example
+.kube/
+*.pem
+*.key
+
+# --- OS / IDE Files ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Binaries & Tools ---
+bin/
+dist/
+# Si vous téléchargez kubectl/helm localement via le bootstrap
+./kubectl
+./helm
+
+# --- Helm ---
+charts/
+tmp/
+*.tgz
+.helm/
+
+# --- Logs ---
+*.log
+/k3s-install.sh

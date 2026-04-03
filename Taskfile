@@ -1,0 +1,154 @@
+version: '3'
+
+# Load environment variables from a local .env file.
+dotenv: ['.env']
+
+# ------------------------------------------------------------------------------
+# Global Configuration
+# ------------------------------------------------------------------------------
+
+vars:
+  KUBECONFIG: '{{.KUBECONFIG | default "~/.kube/config"}}'
+  
+  # Namespaces
+  ARGOCD_NS: "argocd"
+  MONITORING_NS: "monitoring"
+  INGRESS_NS: "ingress-nginx"
+  CERT_MANAGER_NS: "cert-manager"
+
+  # Binaries
+  HELM: "helm"
+  KUBECTL: "kubectl"
+
+# ------------------------------------------------------------------------------
+# Task Definitions
+# ------------------------------------------------------------------------------
+
+tasks:
+
+  default:
+    silent: true
+    cmds:
+      - task: help
+
+  help:
+    desc: "Show available commands."
+    cmds:
+      - task --list
+    silent: true
+
+  # --- 1. Helm Repository Management ---
+
+  helm:repos:
+    desc: "Add and update required Helm charts repositories."
+    internal: true
+    cmds:
+      - "{{.HELM}} repo add ingress-nginx https://kubernetes.github.io/ingress-nginx"
+      - "{{.HELM}} repo add jetstack https://charts.jetstack.io"
+      - "{{.HELM}} repo add prometheus-community https://prometheus-community.github.io/helm-charts"
+      - "{{.HELM}} repo add grafana https://grafana.github.io/helm-charts"
+      - "{{.HELM}} repo update"
+    silent: true
+
+  # --- 2. Advanced Bootstrap ---
+
+  bootstrap:k3s:
+    desc: "Install local K3s cluster."
+    cmds:
+      - bash bootstrap/install-k3s.sh
+
+  bootstrap:helm:
+    desc: "Install Helm binary."
+    cmds:
+      - bash bootstrap/install-helm.sh
+
+  bootstrap:all:
+    desc: "🚀 Full bootstrap: Cluster + Helm + Repos (Best for New Joiners)."
+    summary: "One-stop command to get a functional environment from scratch."
+    cmds:
+      - task: bootstrap:k3s
+      - task: bootstrap:helm
+      - task: helm:repos
+
+  # --- 3. Health & Observability ---
+
+  cluster:status:
+    desc: "Quick node status check."
+    cmds:
+      - "{{.KUBECTL}} get nodes -o wide"
+
+  cluster:health:
+    desc: "🩺 Global health check: Nodes and all Pods status."
+    cmds:
+      - echo "--- Nodes ---"
+      - "{{.KUBECTL}} get nodes"
+      - echo "--- Pods (All Namespaces) ---"
+      - "{{.KUBECTL}} get pods -A"
+
+  # --- 4. Core Infrastructure (ArgoCD) ---
+
+  install:argocd:
+    desc: "Step 1: Install ArgoCD Infrastructure."
+    deps: [helm:repos]
+    cmds:
+      - "{{.KUBECTL}} create namespace {{.ARGOCD_NS}} --dry-run=client -o yaml | {{.KUBECTL}} apply -f -"
+      - "{{.KUBECTL}} apply -n {{.ARGOCD_NS}} -f infrastructure/argocd/install.yaml"
+
+  deploy:gitops:
+    desc: "Step 2: Deploy GitOps Root Application (Runtime)."
+    summary: "Connects the cluster to the Git source of truth. Requires GITHUB_TOKEN."
+    preconditions:
+      - sh: '[ -n "{{.GITHUB_TOKEN}}" ]'
+        msg: "FATAL: GITHUB_TOKEN is not set. Check your .env file."
+    cmds:
+      # Use env to pass secrets to the command without echoing them to logs
+      - env GITHUB_TOKEN={{.GITHUB_TOKEN}} {{.KUBECTL}} apply -f gitops/root-app.yaml
+
+  # --- 5. Platform Services ---
+
+  install:ingress:
+    desc: "Deploy NGINX Ingress."
+    deps: [helm:repos]
+    cmds:
+      - >
+        {{.HELM}} upgrade --install ingress-nginx ingress-nginx/ingress-nginx
+        -f helm-values/ingress-nginx.yaml
+        -n {{.INGRESS_NS}} --create-namespace
+
+  install:cert-manager:
+    desc: "Deploy Cert-Manager."
+    deps: [helm:repos]
+    cmds:
+      - >
+        {{.HELM}} upgrade --install cert-manager jetstack/cert-manager
+        --namespace {{.CERT_MANAGER_NS}} --create-namespace
+        --set installCRDs=true
+
+  install:monitoring:
+    desc: "Deploy Prometheus/Grafana stack."
+    deps: [helm:repos]
+    cmds:
+      - >
+        {{.HELM}} upgrade --install monitoring prometheus-community/kube-prometheus-stack
+        -f helm-values/prometheus.yaml
+        -n {{.MONITORING_NS}} --create-namespace
+
+  install:logging:
+    desc: "Deploy Grafana Loki."
+    deps: [helm:repos]
+    cmds:
+      - >
+        {{.HELM}} upgrade --install loki grafana/loki-stack
+        -f helm-values/loki.yaml -n {{.MONITORING_NS}}
+
+  install:platform:
+    desc: "Install full platform stack."
+    deps: [install:ingress, install:cert-manager, install:monitoring, install:logging]
+
+  # --- 6. Maintenance ---
+
+  destroy:
+    desc: "💣 DESTROY CLUSTER: Irreversible action."
+    prompt: "This will wipe the K3s cluster. Are you absolutely sure?"
+    cmds:
+      - k3s-uninstall.sh
