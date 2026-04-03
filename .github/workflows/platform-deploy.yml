@@ -53,6 +53,8 @@ jobs:
         with:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
+          # 'azure/k8s-set-context' action to utilize the 
+          # KUBE_CONFIG secret
 
       - name: Install Helm
         uses: azure/setup-helm@v3
