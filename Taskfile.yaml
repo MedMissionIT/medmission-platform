@@ -38,7 +38,7 @@ tasks:
     internal: true
     desc: "Verify execution context to prevent accidental production errors."
     cmds:
-      - echo "Target Environment --> {{.ENV | yellow | bold}}"
+      - echo "Target Environment --> {{.ENV}}"
       - |
         if [ "{{.ENV}}" == "prod" ]; then
           echo "⚠️  WARNING: Targeting PRODUCTION environment ⚠️" | grep --color ".*"
@@ -159,7 +159,7 @@ tasks:
       - curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://{{.INGRESS_HOST}}/health | grep "200"
     silent: true
 
-  validate:platform:
+validate:platform:
     desc: "Comprehensive reliability check of all platform components."
     cmds:
       - task: cluster:health
