@@ -141,3 +141,27 @@ tasks:
     prompt: "Are you sure you want to delete the {{.ENV}} cluster?"
     cmds:
       - k3s-uninstall.sh
+
+# --- 7. Post-Deployment Validation (SLO/SLI) ---
+
+  validate:api:
+    desc: "Verify that the Ingress is routing traffic and the API is healthy."
+    vars:
+      # We check the health endpoint of our newly deployed ingress
+      INGRESS_HOST:
+        sh: "{{.KUBECTL}} get ingress -n {{.INGRESS_NS}} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}'"
+    preconditions:
+      - sh: "[ -z '{{.INGRESS_HOST}}' ] && exit 1 || exit 0"
+        msg: "LoadBalancer IP not yet assigned. Verification deferred."
+    cmds:
+      - echo "Testing LoadBalancer at {{.INGRESS_HOST}}..."
+      # Basic smoke test: Check for 200 OK with a 10s timeout
+      - curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://{{.INGRESS_HOST}}/health | grep "200"
+    silent: true
+
+  validate:platform:
+    desc: "Comprehensive reliability check of all platform components."
+    cmds:
+      - task: cluster:health
+      - task: validate:api
+      - echo "✅ SLI Verification Passed: Platform is operational and performing within limits."
