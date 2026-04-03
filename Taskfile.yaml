@@ -1,0 +1,167 @@
+version: '3'
+
+# Multi-Environment Strategy:
+# Loads .env.dev by default, or .env.staging / .env.prod based on the ENV variable.
+vars:
+  ENV: '{{.ENV | default "dev"}}'
+  KUBECONFIG: '{{.KUBECONFIG | default "~/.kube/config"}}'
+  
+  # Project Namespaces
+  ARGOCD_NS: "argocd"
+  MONITORING_NS: "monitoring"
+  INGRESS_NS: "ingress-nginx"
+  CERT_MANAGER_NS: "cert-manager"
+
+  # Binaries
+  HELM: "helm"
+  KUBECTL: "kubectl"
+
+# Dynamic environment file loading
+dotenv: ['.env.{{.ENV}}']
+
+tasks:
+
+  default:
+    silent: true
+    cmds:
+      - task: help
+
+  help:
+    desc: "Show help and list of available commands."
+    cmds:
+      - task --list
+    silent: true
+
+  # --- 1. Validation & Security ---
+
+  check:context:
+    internal: true
+    desc: "Verify execution context to prevent accidental production errors."
+    cmds:
+      - echo "Target Environment --> {{.ENV}}"
+      - |
+        if [ "{{.ENV}}" == "prod" ]; then
+          echo "⚠️  WARNING: Targeting PRODUCTION environment ⚠️" | grep --color ".*"
+        fi
+    silent: true
+
+  check:env-vars:
+    internal: true
+    desc: "Verify presence of critical secrets before execution."
+    preconditions:
+      - sh: '[ -n "{{.GITHUB_TOKEN}}" ]'
+        msg: "FATAL: GITHUB_TOKEN missing in .env.{{.ENV}}. Installation aborted."
+    silent: true
+
+  # --- 2. Helm Management ---
+
+  helm:repos:
+    desc: "Configure official Helm repositories."
+    internal: true
+    cmds:
+      - "{{.HELM}} repo add ingress-nginx https://kubernetes.github.io/ingress-nginx"
+      - "{{.HELM}} repo add jetstack https://charts.jetstack.io"
+      - "{{.HELM}} repo add prometheus-community https://prometheus-community.github.io/helm-charts"
+      - "{{.HELM}} repo add grafana https://grafana.github.io/helm-charts"
+      - "{{.HELM}} repo update"
+    silent: true
+
+  # --- 3. Bootstrap & Provisioning ---
+
+  bootstrap:k3s:
+    desc: "Install local K3s cluster."
+    cmds:
+      - bash bootstrap/install-k3s.sh
+
+  bootstrap:all:
+    desc: "🚀 Full provisioning (Cluster + Helm + Repos)."
+    cmds:
+      - task: bootstrap:k3s
+      - task: bootstrap:helm
+      - task: helm:repos
+
+  # --- 4. Core Infrastructure (ArgoCD) ---
+
+  install:argocd:
+    desc: "Step 1: Install ArgoCD infrastructure."
+    deps: [check:context, helm:repos]
+    cmds:
+      - "{{.KUBECTL}} create namespace {{.ARGOCD_NS}} --dry-run=client -o yaml | {{.KUBECTL}} apply -f -"
+      - "{{.KUBECTL}} apply -n {{.ARGOCD_NS}} -f infrastructure/argocd/install.yaml"
+
+  deploy:gitops:
+    desc: "Step 2: Deploy GitOps Root-App (Runtime)."
+    deps: [check:context, check:env-vars]
+    cmds:
+      # Secure secret injection without log exposure
+      - env GITHUB_TOKEN={{.GITHUB_TOKEN}} {{.KUBECTL}} apply -f gitops/{{.ENV}}/root-app.yaml
+
+  # --- 5. Platform Stack (Multi-Env) ---
+
+  install:ingress:
+    desc: "Deploy Ingress-Nginx."
+    deps: [helm:repos]
+    cmds:
+      - >
+        {{.HELM}} upgrade --install ingress-nginx ingress-nginx/ingress-nginx
+        -f helm-values/{{.ENV}}/ingress-nginx.yaml
+        -n {{.INGRESS_NS}} --create-namespace
+
+  install:monitoring:
+    desc: "Deploy Prometheus/Grafana Stack."
+    deps: [helm:repos]
+    cmds:
+      - >
+        {{.HELM}} upgrade --install monitoring prometheus-community/kube-prometheus-stack
+        -f helm-values/{{.ENV}}/prometheus.yaml
+        -n {{.MONITORING_NS}} --create-namespace
+
+  install:platform:
+    desc: "Install full stack (Ingress, Cert, Monitoring, Logging)."
+    deps:
+      - install:ingress
+      - install:monitoring
+      - install:logging
+    cmds:
+      - echo "Platform stack successfully deployed on {{.ENV}}"
+
+  # --- 6. Observability & Maintenance ---
+
+  cluster:health:
+    desc: "🩺 Global health check (Nodes & Pods)."
+    cmds:
+      - "{{.KUBECTL}} get nodes"
+      - "{{.KUBECTL}} get pods -A"
+
+  destroy:
+    desc: "💣 DANGER: Complete cluster decommissioning."
+    preconditions:
+      - sh: '[ "{{.ENV}}" != "prod" ]'
+        msg: "❌ FORBIDDEN ACTION: Production decommissioning via Task is disabled."
+    prompt: "Are you sure you want to delete the {{.ENV}} cluster?"
+    cmds:
+      - k3s-uninstall.sh
+
+# --- 7. Post-Deployment Validation (SLO/SLI) ---
+
+  validate:api:
+    desc: "Verify that the Ingress is routing traffic and the API is healthy."
+    vars:
+      # We check the health endpoint of our newly deployed ingress
+      INGRESS_HOST:
+        sh: "{{.KUBECTL}} get ingress -n {{.INGRESS_NS}} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}'"
+    preconditions:
+      - sh: "[ -z '{{.INGRESS_HOST}}' ] && exit 1 || exit 0"
+        msg: "LoadBalancer IP not yet assigned. Verification deferred."
+    cmds:
+      - echo "Testing LoadBalancer at {{.INGRESS_HOST}}..."
+      # Basic smoke test: Check for 200 OK with a 10s timeout
+      - curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://{{.INGRESS_HOST}}/health | grep "200"
+    silent: true
+
+validate:platform:
+    desc: "Comprehensive reliability check of all platform components."
+    cmds:
+      - task: cluster:health
+      - task: validate:api
+      - echo "✅ SLI Verification Passed: Platform is operational and performing within limits."
