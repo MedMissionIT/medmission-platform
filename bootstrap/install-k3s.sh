@@ -21,5 +21,6 @@ else
 fi
 
 # Merge kubeconfig
-k3d kubeconfig merge dev-cluster --switch-context
+#k3d kubeconfig merge dev-cluster --switch-context
+k3d kubeconfig merge dev-cluster --kubeconfig-switch-context
 echo "Cluster is ready! Context switched to k3d-dev-cluster."

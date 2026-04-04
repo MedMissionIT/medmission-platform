@@ -1,0 +1,8 @@
+prometheus:
+  prometheusSpec:
+    retention: 1d
+    storageSpec:
+      disableMountSubPath: true
+grafana:
+  enabled: true
+  adminPassword: admin

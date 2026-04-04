@@ -55,7 +55,7 @@ tasks:
 
   # --- 2. Helm Management ---
 
-  test:repos:
+  helm:repos:
     desc: "Configure official Helm repositories."
     internal: true
     cmds:
