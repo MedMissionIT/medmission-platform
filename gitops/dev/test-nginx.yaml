@@ -13,11 +13,25 @@ spec:
       labels:
         app: nginx
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101 
+        fsGroup: 101
       containers:
       - name: nginx
-        image: nginx:latest
+        image: nginxinc/nginx-unprivileged:latest 
         ports:
-        - containerPort: 80
+        - containerPort: 8080 
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true 
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
 ---
 apiVersion: v1
 kind: Service
@@ -30,4 +44,4 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 80
+      targetPort: 8080
