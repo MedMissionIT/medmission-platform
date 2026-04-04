@@ -22,22 +22,27 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Scan Kubernetes manifests & Helm values for misconfigurations
+      # Static Analysis Security Testing (SAST) for Kubernetes/Helm
       - name: Run Trivy Config Scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'config'
           hide-progress: false
           format: 'table'
-          exit-code: '1' # Fails the build if high/critical issues are found
+          exit-code: '1' 
           severity: 'HIGH,CRITICAL'
 
   deploy:
-    name: Deploy to ${{ github.event.inputs.environment || 'staging' }}
-    needs: security-scan # Wait for security scan to pass
+    name: Deploy to Environment
+    needs: security-scan
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'staging' }}
+    # Map the environment dynamically for GitHub UI tracking
+    environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'staging') }}
     
+    env:
+      # Centralized environment variable logic
+      ENV_NAME: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'staging') }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -46,28 +51,48 @@ jobs:
         uses: arduino/setup-task@v2
         with:
           version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      # --- START: SSH TUNNEL FOR KUBECONFIG ---
+      # This block fetches the kubeconfig from the VPS and patches 127.0.0.1 to VPS_HOST
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: "placeholder"
+
+      - name: Fetch and Patch Kubeconfig from VPS
+        run: |
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cat ~/.kube/config" > ./kubeconfig_raw
+          # Replace localhost with the actual VPS IP so GHA can reach the API
+          sed "s/127.0.0.1/${{ secrets.VPS_HOST }}/g" ./kubeconfig_raw > ./kubeconfig_final
+      # --- END: SSH TUNNEL ---
 
       - name: Set up Kubernetes Context
         uses: azure/k8s-set-context@v3
         with:
           method: kubeconfig
-          kubeconfig: ${{ secrets.KUBE_CONFIG }}
-          # 'azure/k8s-set-context' action to utilize the 
-          # KUBE_CONFIG secret
-
-      - name: Install Helm
-        uses: azure/setup-helm@v3
+          kubeconfig: ${{ github.workspace }}/kubeconfig_final
 
       - name: Deploy Platform via Task
         env:
-          ENV: ${{ github.event.inputs.environment || 'staging' }}
+          ENV: ${{ env.ENV_NAME }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          task helm:repos
-          task install:argocd
-          task install:platform
-          task deploy:gitops
+          # 1. Sync Helm Repos via PUBLIC task (avoids 'internal' error)
+          task test:repos ENV=$ENV
+          
+          # 2. Install Infrastructure Components
+          task install:argocd ENV=$ENV
+          task install:platform ENV=$ENV
+          
+          # 3. Trigger GitOps Root-App deployment
+          # task deploy:gitops ENV=$ENV
 
-      - name: Health Check
-        run: task cluster:health
+      - name: Post-Deployment Health Check
+        env:
+          ENV: ${{ env.ENV_NAME }}
+        run: task cluster:health ENV=$ENV
