@@ -1,3 +1,43 @@
+# --- 0. NAMESPACE & STORAGE ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: medmission
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-pvc
+  namespace: medmission
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openmrs-data-pvc
+  namespace: medmission
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: metabase-data-pvc
+  namespace: medmission
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 2Gi
+
+---
 # --- 1. BASE DE DONNÉES (MARIADB) ---
 apiVersion: apps/v1
 kind: Deployment
@@ -5,6 +45,8 @@ metadata:
   name: openmrs-db
   namespace: medmission
 spec:
+  strategy:
+    type: Recreate # Important pour les DB avec un seul volume RWO
   selector:
     matchLabels:
       app: openmrs-db
@@ -22,21 +64,27 @@ spec:
           value: "openmrs"
         - name: MYSQL_USER
           valueFrom:
-            secretKeyRef:
-              name: openmrs-db-secrets
-              key: OMRS_DB_USER
+            secretKeyRef: { name: openmrs-db-secrets, key: OMRS_DB_USER }
         - name: MYSQL_PASSWORD
           valueFrom:
-            secretKeyRef:
-              name: openmrs-db-secrets
-              key: OMRS_DB_PASSWORD
+            secretKeyRef: { name: openmrs-db-secrets, key: OMRS_DB_PASSWORD }
         - name: MYSQL_ROOT_PASSWORD
           valueFrom:
-            secretKeyRef:
-              name: openmrs-db-secrets
-              key: MYSQL_ROOT_PASSWORD
+            secretKeyRef: { name: openmrs-db-secrets, key: MYSQL_ROOT_PASSWORD }
         ports:
         - containerPort: 3306
+        volumeMounts:
+        - name: db-storage
+          mountPath: /var/lib/mysql
+        livenessProbe:
+          exec:
+            command: ["mysqladmin", "ping", "-h", "localhost"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: db-storage
+        persistentVolumeClaim:
+          claimName: mariadb-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -48,6 +96,7 @@ spec:
     app: openmrs-db
   ports:
     - port: 3306
+      targetPort: 3306
 
 ---
 # --- 2. BACKEND OPENMRS ---
@@ -73,18 +122,31 @@ spec:
           value: "db"
         - name: OMRS_CONFIG_CONNECTION_DATABASE
           value: "openmrs"
+        - name: OMRS_CONFIG_CREATE_TABLES
+          value: "true"
+        - name: OMRS_CONFIG_AUTO_UPDATE_DATABASE
+          value: "true"
         - name: OMRS_CONFIG_CONNECTION_USERNAME
           valueFrom:
-            secretKeyRef:
-              name: openmrs-db-secrets
-              key: OMRS_DB_USER
+            secretKeyRef: { name: openmrs-db-secrets, key: OMRS_DB_USER }
         - name: OMRS_CONFIG_CONNECTION_PASSWORD
           valueFrom:
-            secretKeyRef:
-              name: openmrs-db-secrets
-              key: OMRS_DB_PASSWORD
+            secretKeyRef: { name: openmrs-db-secrets, key: OMRS_DB_PASSWORD }
         ports:
         - containerPort: 8080
+        volumeMounts:
+        - name: backend-data
+          mountPath: /openmrs/data
+        readinessProbe:
+          httpGet:
+            path: /openmrs/
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 15
+      volumes:
+      - name: backend-data
+        persistentVolumeClaim:
+          claimName: openmrs-data-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -96,6 +158,7 @@ spec:
     app: openmrs-backend
   ports:
     - port: 8080
+      targetPort: 8080
 
 ---
 # --- 3. FRONTEND OPENMRS ---
@@ -123,6 +186,11 @@ spec:
           value: "/openmrs"
         ports:
         - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
 ---
 apiVersion: v1
 kind: Service
@@ -134,44 +202,10 @@ spec:
     app: openmrs-frontend
   ports:
     - port: 80
+      targetPort: 80
 
 ---
-# --- 4. INGRESS ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: openmrs-ingress
-  namespace: medmission
-  annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
-spec:
-  rules:
-  - http:
-      paths:
-      - path: /metabase(.*)
-        pathType: Prefix
-        backend:
-          service:
-            name: metabase-service
-            port:
-              number: 3000
-      - path: /openmrs/spa(.*)
-        pathType: Prefix
-        backend:
-          service:
-            name: frontend
-            port:
-              number: 80
-      - path: /openmrs(.*)
-        pathType: Prefix
-        backend:
-          service:
-            name: backend
-            port:
-              number: 8080
-  ---
-# --- 5. METABASE ---
+# --- 4. METABASE ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -200,13 +234,20 @@ spec:
           value: "root"
         - name: MB_DB_PASS
           valueFrom:
-            secretKeyRef:
-              name: openmrs-db-secrets
-              key: MYSQL_ROOT_PASSWORD
+            secretKeyRef: { name: openmrs-db-secrets, key: MYSQL_ROOT_PASSWORD }
         - name: MB_DB_HOST
           value: "db"
+        - name: MB_SITE_URL
+          value: "https://v34924.1blu.de/metabase"
         ports:
         - containerPort: 3000
+        volumeMounts:
+        - name: metabase-storage
+          mountPath: /metabase-data
+      volumes:
+      - name: metabase-storage
+        persistentVolumeClaim:
+          claimName: metabase-data-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -217,4 +258,42 @@ spec:
   selector:
     app: metabase
   ports:
-    - port: 3000    
+    - port: 3000
+      targetPort: 3000
+
+---
+# --- 5. INGRESS (NGINX) ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openmrs-ingress
+  namespace: medmission
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    # On évite le rewrite-target radical pour ne pas casser les assets relatifs du SPA
+spec:
+  rules:
+  - host: v34924.1blu.de
+    http:
+      paths:
+      - path: /metabase
+        pathType: Prefix
+        backend:
+          service:
+            name: metabase-service
+            port:
+              number: 3000
+      - path: /openmrs/spa
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+      - path: /openmrs
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8080
