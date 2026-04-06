@@ -1,0 +1,18 @@
+global:
+  image:
+    tag: "v2.10.4"
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+controller:
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+server:
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+repoServer:
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false

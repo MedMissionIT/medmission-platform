@@ -80,13 +80,15 @@ tasks:
       - task: helm:repos
 
   # --- 4. Core Infrastructure (ArgoCD) ---
-
   install:argocd:
-    desc: "Step 1: Install ArgoCD infrastructure."
+    desc: "Step 1: Install ArgoCD via Helm with Security Hardening."
     deps: [check:context, helm:repos]
     cmds:
-      - "{{.KUBECTL}} create namespace {{.ARGOCD_NS}} --dry-run=client -o yaml | {{.KUBECTL}} apply -f -"
-      - "{{.KUBECTL}} apply -n {{.ARGOCD_NS}} -f infrastructure/argocd/install.yaml --server-side --force-conflicts"
+      - >
+        {{.HELM}} upgrade --install argocd argo/argo-cd
+        --version 6.7.11
+        --namespace {{.ARGOCD_NS}} --create-namespace
+        -f helm-values/{{.ENV}}/argocd.yaml 
 
   deploy:gitops:
     desc: "Step 2: Deploy GitOps Root-App (Runtime)."
