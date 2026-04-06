@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/kehe0014/medmission-platform.git
+    repoURL: https://github.com/MedMissionIT/medmission-platform.git
     targetRevision: develop
     path: gitops/dev
   destination:
