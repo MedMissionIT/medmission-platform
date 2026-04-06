@@ -28,10 +28,25 @@ spec:
           capabilities:
             drop:
               - ALL
+        # Mount tmp, cache, and run directories as emptyDir volumes to ensure they are writable by the non-root user
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /var/cache/nginx
+        - name: run
+          mountPath: /var/run
         resources:
           limits:
             memory: "128Mi"
             cpu: "500m"
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

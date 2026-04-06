@@ -86,7 +86,7 @@ tasks:
     cmds:
       - >
         {{.HELM}} upgrade --install argocd argo/argo-cd
-        --version 6.7.11
+        --version 9.4.17
         --namespace {{.ARGOCD_NS}} --create-namespace
         -f helm-values/{{.ENV}}/argocd.yaml 
 
