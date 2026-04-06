@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-app-dev
+  namespace: argocd
+  # Finalizer ensures that cascading deletion happens if the app is removed
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MedMissionIT/medmission-platform.git
+    targetRevision: develop
+    path: gitops/dev
+  destination:
+    server: https://kubernetes.default.svc
+    # NOTE: Keep destination namespace as argocd for the App-of-Apps pattern.
+    # Child manifests (openmrs, etc.) must define their own 'namespace: medmission'.
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true      # Automatically delete resources removed from Git
+      selfHeal: true   # Revert manual 'kubectl' changes to match Git state
+    syncOptions:
+      - CreateNamespace=true    # Create 'medmission' namespace if missing
+      - ApplyOutOfSyncOnly=true # Optimization: Only sync resources that changed
+      - SkipDryRunOnMissingResource=true # Prevents block on initial CRD installs

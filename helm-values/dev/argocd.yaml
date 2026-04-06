@@ -1,0 +1,47 @@
+## ArgoCD Deployment Configuration
+global:
+  domain: argocd.178.254.23.139.nip.io
+  image:
+    tag: "v2.13.3" 
+
+server:
+  # INCREASE RESOURCES: Avoid the CrashLoop from memory pressure
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1024Mi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    hosts:
+      - argocd.178.254.23.139.nip.io
+    servicePort: 80
+
+  # REMOVED extraArgs entirely to prevent flag conflicts
+  extraArgs: [] 
+
+configs:
+  params:
+    # This single line handles the insecure flag correctly
+    server.insecure: true
+    server.basehref: /
+    server.rootpath: /
+  cm:
+    create: true
+    admin.enabled: "true"
+    timeout.reconciliation: 180s
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:org-admin, applications, *, */*, allow
+      p, role:org-admin, clusters, get, *, allow
+      p, role:org-admin, repositories, *, *, allow
+      g, admin, role:org-admin

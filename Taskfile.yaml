@@ -16,6 +16,10 @@ vars:
   HELM: "helm"
   KUBECTL: "kubectl"
 
+  # Values Path Helper
+  VALUES_BASE: "helm-values/base"
+  VALUES_ENV: "helm-values/{{.ENV}}"
+
 # Dynamic environment file loading
 dotenv: ['.env.{{.ENV}}']
 
@@ -59,6 +63,7 @@ tasks:
     desc: "Configure official Helm repositories."
     internal: true
     cmds:
+      - "{{.HELM}} repo add argo https://argoproj.github.io/argo-helm"
       - "{{.HELM}} repo add ingress-nginx https://kubernetes.github.io/ingress-nginx"
       - "{{.HELM}} repo add jetstack https://charts.jetstack.io"
       - "{{.HELM}} repo add prometheus-community https://prometheus-community.github.io/helm-charts"
@@ -83,45 +88,57 @@ tasks:
   # --- 4. Core Infrastructure (ArgoCD) ---
 
   install:argocd:
+<<<<<<< Updated upstream
     desc: "Step 1: Install ArgoCD infrastructure."
     deps: [check:context, helm:repos]
     cmds:
       - "{{.KUBECTL}} create namespace {{.ARGOCD_NS}} --dry-run=client -o yaml | {{.KUBECTL}} apply -f -"
       - "{{.KUBECTL}} apply -n {{.ARGOCD_NS}} -f infrastructure/argocd/install.yaml"
+=======
+    desc: "Step 1: Install ArgoCD using Layered Values (Base + Env)."
+    deps: [check:context, helm:repos]
+    cmds:
+      - >
+        {{.HELM}} upgrade --install argocd argo/argo-cd
+        --version 9.4.17
+        --namespace {{.ARGOCD_NS}} --create-namespace
+        -f {{.VALUES_BASE}}/argocd.yaml
+        -f {{.VALUES_ENV}}/argocd.yaml 
+>>>>>>> Stashed changes
 
   deploy:gitops:
     desc: "Step 2: Deploy GitOps Root-App (Runtime)."
     deps: [check:context, check:env-vars]
     cmds:
-      # Secure secret injection without log exposure
       - env GITHUB_TOKEN={{.GITHUB_TOKEN}} {{.KUBECTL}} apply -f gitops/{{.ENV}}/root-app.yaml
 
   # --- 5. Platform Stack (Multi-Env) ---
 
   install:ingress:
-    desc: "Deploy Ingress-Nginx."
+    desc: "Deploy Ingress-Nginx using Layered Values."
     deps: [helm:repos]
     cmds:
       - >
         {{.HELM}} upgrade --install ingress-nginx ingress-nginx/ingress-nginx
-        -f helm-values/{{.ENV}}/ingress-nginx.yaml
+        -f {{.VALUES_BASE}}/ingress-nginx.yaml
+        -f {{.VALUES_ENV}}/ingress-nginx.yaml
         -n {{.INGRESS_NS}} --create-namespace
 
   install:monitoring:
-    desc: "Deploy Prometheus/Grafana Stack."
+    desc: "Deploy Prometheus Stack using Layered Values."
     deps: [helm:repos]
     cmds:
       - >
         {{.HELM}} upgrade --install monitoring prometheus-community/kube-prometheus-stack
-        -f helm-values/{{.ENV}}/prometheus.yaml
+        -f {{.VALUES_BASE}}/prometheus.yaml
+        -f {{.VALUES_ENV}}/prometheus.yaml
         -n {{.MONITORING_NS}} --create-namespace
 
   install:platform:
-    desc: "Install full stack (Ingress, Cert, Monitoring, Logging)."
+    desc: "Install full stack (Ingress, Monitoring, Logging)."
     deps:
       - install:ingress
       - install:monitoring
-      - install:logging
     cmds:
       - echo "Platform stack successfully deployed on {{.ENV}}"
 
@@ -142,6 +159,7 @@ tasks:
     cmds:
       - k3s-uninstall.sh
 
+<<<<<<< Updated upstream
 # --- 7. Post-Deployment Validation (SLO/SLI) ---
 
   validate:api:
@@ -165,3 +183,11 @@ tasks:
       - task: cluster:health
       - task: validate:api
       - echo "✅ SLI Verification Passed: Platform is operational and performing within limits."
+=======
+  # --- 7. Validation ---
+
+  test:repos:
+    desc: "Test Helm repository connectivity and chart availability."
+    cmds:
+      - task: helm:repos
+>>>>>>> Stashed changes

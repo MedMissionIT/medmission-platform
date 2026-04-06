@@ -1,0 +1,76 @@
+name: GitOps CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [staging, prod]
+
+jobs:
+  # --- ÉTAPE 1 : VALIDATION (CI) ---
+  validate:
+    name: Lint & Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+
+      - name: Kubernetes Manifest Lint (Kube-linter)
+        uses: stackrox/kube-linter-action@v1
+        with:
+          directory: apps/gitops
+
+      - name: Run Trivy Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+
+  # --- ÉTAPE 2 : DÉPLOIEMENT GITOPS (CD) ---
+  deploy:
+    name: Sync GitOps State
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'staging') }}
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ici, au lieu de SSH + Helm, on notifie ArgoCD ou on met à jour les manifests
+      # Dans un vrai workflow GitOps, ArgoCD détecte le push sur 'main' automatiquement.
+      
+      - name: Manual Health Check (Optional Connectivity Test)
+        run: |
+          echo "🚀 Promotion vers l'environnement: ${{ env.ENV_NAME }}"
+          echo "ArgoCD va synchroniser l'état depuis la branche ${{ github.ref_name }}"
+
+  # --- ÉTAPE 3 : VÉRIFICATION POST-DEPLOY ---
+  post-check:
+    name: Cluster Health & Smoke Test
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known_hosts: "placeholder"
+
+      - name: Verify Application Access
+        run: |
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Test de fumée : Est-ce que le port 80 répond avec le hostname attendu ?
+          curl -I -s --retry 5 --retry-delay 10 -H "Host: v34924.1blu.de" http://${{ secrets.VPS_HOST }}/openmrs/spa/

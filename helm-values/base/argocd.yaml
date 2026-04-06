@@ -1,0 +1,84 @@
+## ArgoCD Deployment Configuration - Development Environment
+## Standardized for NGINX Ingress & gRPC communication
+
+global:
+  domain: argocd.178.254.23.139.nip.io
+
+server:
+  # Enable Ingress for external access
+  ingress:
+    enabled: true
+    # Use the modern field instead of deprecated annotation
+    ingressClassName: nginx
+    annotations:
+      # Required for the ArgoCD CLI to communicate via gRPC
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      # Increase buffer size for large metadata syncs
+      nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+      # Disable SSL redirect if you are testing without certificates
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    hosts:
+      - argocd.178.254.23.139.nip.io
+
+  # Extra arguments for the API server
+  extraArgs:
+    - --insecure # Required if NGINX Ingress handles SSL termination
+    - --basehref /
+    - --rootpath /
+
+configs:
+  # General ArgoCD Settings
+  cm:
+    create: true
+    timeout.reconciliation: 180s
+    admin.enabled: "true"
+
+  # Role-Based Access Control (RBAC)
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:org-admin, applications, *, */*, allow
+      p, role:org-admin, clusters, get, *, allow
+      p, role:org-admin, repositories, *, *, allow
+      g, admin, role:org-admin
+
+## Resource Management & Security Fixes
+controller:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+repoServer:
+  # CRITICAL FIX: Ensures the init container 'copyutil' has permissions
+  # to write binaries to the shared volume in k3d/restricted environments.
+  containerSecurityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+redis:
+  enabled: true 
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+      
